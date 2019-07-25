@@ -1,0 +1,1 @@
+CNN+RNN+CTC基于DL4J实现的文本识别demo
