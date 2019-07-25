@@ -39,9 +39,6 @@ import onnx.OnnxProto3.NodeProto;
  */
 public class LossCTC extends DifferentialFunction implements ILossFunction{
 
-	/**
-	 * 
-	 */
 	private static final long serialVersionUID = 1L;
 	
 	private static final double DEFAULT_SOFTMAX_CLIPPING_EPSILON = 1e-10;

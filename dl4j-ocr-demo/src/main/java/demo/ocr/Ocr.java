@@ -46,28 +46,106 @@ import org.slf4j.LoggerFactory;
  *
  */
 public class Ocr {
-	private static long seed = 123;
-	private static int epochs = 100;
-	private static int batchSize = 15;
-	private static int height = 60;
-	private static int width = 160;
-	private static int channels = 1;
-	private static int timeSeriesLength = 16; // 时序长度
-	private static String dirPath = "E:/deeplearning/captcha/";
-	private static String textCharStr = "_234578acdefgmnpwxy";
-	private static String modelFileName = "ocrCtcModel.json";
-	private static int maxLabelLength = 8; // 标签最大长度（支持不定长度训练）
+	private final static long seed = 123;
+	private final static int height = 60;
+	private final static int width = 160;
+	private final static int channels = 1;
+	private int epochs = 100;	// 训练轮次
+	private int batchSize = 15;	// 批次大小
+	private String dataSetType = "train";
+	private int timeSeriesLength = 16; // 时序长度
+	private int maxLabelLength = 16; // 标签最大长度（支持不定长度训练）
+	private String textChars;	// 文本字符集（包括blank,_放最前面）
+	private String dirPath;	// 样本路径
+	private String modelFileName;	// 模型名称
 	
-	public static void main(String[] args) throws IOException, InterruptedException {
-		MultiDataSetIterator trainMulIterator = new MultiRecordDataSetIterator(batchSize, "train");
-		//ComputationGraph model = ModelSerializer.restoreComputationGraph(modelFileName);
+	public int getEpochs() {
+		return epochs;
+	}
+
+	public void setEpochs(int epochs) {
+		this.epochs = epochs;
+	}
+
+	public int getBatchSize() {
+		return batchSize;
+	}
+
+	public void setBatchSize(int batchSize) {
+		this.batchSize = batchSize;
+	}
+
+	public String getDataSetType() {
+		return dataSetType;
+	}
+
+	public void setDataSetType(String dataSetType) {
+		this.dataSetType = dataSetType;
+	}
+
+	public int getTimeSeriesLength() {
+		return timeSeriesLength;
+	}
+
+	public void setTimeSeriesLength(int timeSeriesLength) {
+		this.timeSeriesLength = timeSeriesLength;
+	}
+
+	public int getMaxLabelLength() {
+		return maxLabelLength;
+	}
+
+	public void setMaxLabelLength(int maxLabelLength) {
+		this.maxLabelLength = maxLabelLength;
+	}
+
+	public String getTextChars() {
+		return textChars;
+	}
+
+	public void setTextChars(String textChars) {
+		this.textChars = textChars;
+	}
+
+	public String getDirPath() {
+		return dirPath;
+	}
+
+	public void setDirPath(String dirPath) {
+		this.dirPath = dirPath;
+	}
+
+	public String getModelFileName() {
+		return modelFileName;
+	}
+
+	public void setModelFileName(String modelFileName) {
+		this.modelFileName = modelFileName;
+	}
+
+	/**
+	 * 训练
+	 * 
+	 * @throws IOException
+	 */
+	public void train() throws IOException {
+		MultiDataSetIterator mulIterator = new MultiRecordDataSetIterator(batchSize, dataSetType);
 		ComputationGraph model = createModel();
 		model.init();
 		System.out.println(model.summary(InputType.convolutional(height, width, channels)));
-		train(model,trainMulIterator);
-		//modelPredict(model, trainMulIterator);
-		ModelSerializer.writeModel(model, modelFileName, true);
-		System.out.println("end...");
+		train(model,mulIterator);
+		System.out.println("train end...");
+	}
+	
+	/**
+	 * 预测
+	 * 
+	 * @throws IOException
+	 */
+	public void predict() throws IOException {
+		MultiDataSetIterator mulIterator = new MultiRecordDataSetIterator(batchSize, dataSetType);
+		ComputationGraph model = ModelSerializer.restoreComputationGraph(modelFileName);
+		modelPredict(model,mulIterator);
 	}
 	
 	/**
@@ -75,7 +153,7 @@ public class Ocr {
 	 * 
 	 * @return
 	 */
-	public static ComputationGraph createModel(){
+	public ComputationGraph createModel(){
 		ComputationGraphConfiguration config = new NeuralNetConfiguration.Builder().seed(seed)
 				.gradientNormalization(GradientNormalization.RenormalizeL2PerLayer)
 				.l2(1e-3)
@@ -106,7 +184,7 @@ public class Ocr {
 				.addLayer("lstm0", new LSTM.Builder().nIn(512).nOut(256).activation(Activation.TANH).build(), "maxpool4")
 				.addLayer("lstm1", new LSTM.Builder().nIn(256).nOut(256).activation(Activation.TANH).build(), "lstm0")
 				.addLayer("rnnout", new RnnOutputLayer.Builder(new LossCTC(timeSeriesLength,batchSize)).activation(Activation.SOFTMAX)        //MCXENT + softmax for classification
-						.nIn(256).nOut(textCharStr.length()).build(),"lstm1")
+						.nIn(256).nOut(textChars.length()).build(),"lstm1")
 				.inputPreProcessor("lstm0", new OcrCnnToRnnPreProcessor(1,16,512))
 				.build();
 		ComputationGraph model = new ComputationGraph(config);
@@ -120,16 +198,16 @@ public class Ocr {
 	 * @param trainMulIterator
 	 * @throws IOException
 	 */
-	public static void train(ComputationGraph model,MultiDataSetIterator trainMulIterator) throws IOException{
+	private void train(ComputationGraph model,MultiDataSetIterator trainMulIterator) throws IOException{
 		UIServer uiServer = UIServer.getInstance();
         StatsStorage statsStorage = new InMemoryStatsStorage();
         uiServer.attach(statsStorage);
         model.setListeners(new ScoreIterationListener(10), new StatsListener( statsStorage));
 		for ( int i = 0; i < epochs; i ++ ) {
-            System.out.println("Epoch=====================" + i);
+            System.out.println("epoch:" + i);
             model.fit(trainMulIterator);
             // 每10轮保存一次模型
-            if ((i+1)%10 == 0 && i+1 !=epochs) {
+            if ((i+1) % 10 == 0) {
             	ModelSerializer.writeModel(model, modelFileName, true);
             }
         }
@@ -141,7 +219,7 @@ public class Ocr {
 	 * @param model
 	 * @param iterator
 	 */
-	public static void modelPredict(ComputationGraph model, MultiDataSetIterator iterator) {
+	private void modelPredict(ComputationGraph model, MultiDataSetIterator iterator) {
         int sumCount = 0;
         int correctCount = 0;
 
@@ -159,7 +237,7 @@ public class Ocr {
                 for (int digit = 0; digit < (int)output[0].shape()[2]; digit ++) {
                     preOutput = output[0].getRow(dataIndex).getColumn(digit);
                     preOutput.putScalar(new int[]{0,0}, 0);
-                    peLabel += textCharStr.charAt((Nd4j.argMax(preOutput, 0).getInt(0)));
+                    peLabel += textChars.charAt((Nd4j.argMax(preOutput, 0).getInt(0)));
                 }
                 peLabel = simpleParseOutput(peLabel);
                 for (int digit = 0; digit < (int)labels[0].shape()[2]; digit ++) {
@@ -168,7 +246,7 @@ public class Ocr {
                 	if (Nd4j.sum(realLabel, 0).getInt(0) == 0) {
     					continue;
     				}
- 	                reLabel += textCharStr.charAt((Nd4j.argMax(realLabel, 0).getInt(0)));
+ 	                reLabel += textChars.charAt((Nd4j.argMax(realLabel, 0).getInt(0)));
                 }
                 if (peLabel.equals(reLabel)) {
                     correctCount ++;
@@ -181,7 +259,7 @@ public class Ocr {
         System.out.println("validate result : sum count =" + sumCount + " correct count=" + correctCount );
     }
 	
-	static class MultiRecordDataSetIterator implements MultiDataSetIterator {
+	class MultiRecordDataSetIterator implements MultiDataSetIterator {
 	    /**
 		 * 
 		 */
@@ -253,13 +331,13 @@ public class Ocr {
 	    }
 	}
 	
-	static class MulRecordDataLoader extends NativeImageLoader implements Serializable {
+	class MulRecordDataLoader extends NativeImageLoader implements Serializable {
 	    /**
 		 * 
 		 */
 		private static final long serialVersionUID = 1L;
 
-		private static final Logger log = LoggerFactory.getLogger(MulRecordDataLoader.class);
+		private final Logger log = LoggerFactory.getLogger(MulRecordDataLoader.class);
 
 	    private File fullDir = new File(dirPath);
 	    private Iterator<File> fileIterator;
@@ -299,11 +377,11 @@ public class Ocr {
 	            String[] imageNames = imageName.split("");
 	            INDArray feature = asMatrix(image);
 	            INDArray[] features = new INDArray[]{feature};
-	            INDArray label = Nd4j.zeros(1, textCharStr.length(),maxLabelLength);
+	            INDArray label = Nd4j.zeros(1, textChars.length(),maxLabelLength);
 	            INDArray[] labels = new INDArray[]{label};
 	            Nd4j.getAffinityManager().ensureLocation(feature, AffinityManager.Location.DEVICE);
 	            for (int i = 0; i < imageNames.length; i ++) {
-	            	int digit = textCharStr.indexOf(imageNames[i]);
+	            	int digit = textChars.indexOf(imageNames[i]);
 	            	label.putScalar(new int[]{0, digit,i}, 1);
 	            }
 	            feature =  feature.muli(1.0/255.0);
@@ -332,6 +410,48 @@ public class Ocr {
 	        return numExample;
 	    }
 	    
+	}
+	
+	public static class Builder{
+		private Ocr ocr;
+		public Builder(){
+			ocr = new Ocr();
+		}
+		Builder setEpochs(int epochs) {
+			ocr.setEpochs(epochs);
+			return this;
+		}
+		Builder setBatchSize(int batchSize) {
+			ocr.setBatchSize(batchSize);
+			return this;
+		}
+		Builder setDataSetType(String dataSetType) {
+			ocr.setDataSetType(dataSetType);
+			return this;
+		}
+		Builder setTimeSeriesLength(int timeSeriesLength) {
+			ocr.setTimeSeriesLength(timeSeriesLength);
+			return this;
+		}
+		Builder setMaxLabelLength(int maxLabelLength) {
+			ocr.setMaxLabelLength(maxLabelLength);
+			return this;
+		}
+		Builder setTextChars(String textChars) {
+			ocr.setTextChars(textChars);
+			return this;
+		}
+		Builder setDirPath(String dirPath) {
+			ocr.setDirPath(dirPath);
+			return this;
+		}
+		Builder setModelFileName(String modelFileName) {
+			ocr.setModelFileName(modelFileName);
+			return this;
+		}
+		Ocr toOcr() {
+			return ocr;
+		}
 	}
 	
 	/**
